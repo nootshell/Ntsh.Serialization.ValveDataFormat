@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<Import Project="meta/csproj/common.csproj" />
+	<Import Project="meta/csproj/nuget.csproj" />
+
+	<PropertyGroup>
+		<PackageId>Ntsh.Serialization.ValveDataFormat</PackageId>
+		<Title>Ntsh.Serialization.ValveDataFormat</Title>
+		<Description>Valve Data Format (VDF) (de-)serializer.</Description>
+		<Version>0.0.1</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Ntsh.Common" Version="0.0.1" />
+		<PackageReference Include="Ntsh.Serialization" Version="0.0.2" />
+	</ItemGroup>
+
+</Project>
