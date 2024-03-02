@@ -3,6 +3,7 @@
 !*/
 
 # Whitelist repo files
+!.editorconfig
 !.gitignore
 !.gitmodules
 !*.md
