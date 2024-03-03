@@ -14,12 +14,14 @@ namespace Ntsh.Serialization.ValveDataFormat {
 
 	public class VdfAstNodeReader : VdfAstNodeProcessorBase {
 
-		Decoder decoder = Encoding.UTF8.GetDecoder();
+		public const int DefaultBufferSize = 512;
 
-		char[] buffer = new char[512];
-		int buflen = 512;
-		int offset = 512;
-		int offsetInState = 0;
+		protected readonly Decoder decoder;
+		protected readonly StringBuilder builder = new StringBuilder(32);
+
+		protected readonly char[] buffer;
+		protected int bufferOffset;
+		protected int bufferLength = 0;
 
 		protected enum DecState {
 			None,
@@ -28,12 +30,25 @@ namespace Ntsh.Serialization.ValveDataFormat {
 		}
 		DecState state = DecState.None;
 
-		StringBuilder builder = new StringBuilder(64);
+
+
+
+		public int CurrentLine { get; protected set; } = 0;
+
+		public int CharacterInLine { get; protected set; } = 0;
 
 
 
 
-		public VdfAstNodeReader(Stream underlyingStream, bool ownsUnderlyingStream) : base(underlyingStream, ownsUnderlyingStream) { }
+		public VdfAstNodeReader(Stream stream, Encoding encoding, int bufferSize = DefaultBufferSize, bool leaveOpen = false) : base(stream, encoding, leaveOpen) {
+			ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferSize);
+
+			this.decoder = encoding.GetDecoder();
+			this.buffer = new char[bufferSize];
+			this.bufferOffset = bufferSize;
+		}
+
+		public VdfAstNodeReader(Stream stream, int bufferSize = DefaultBufferSize, bool leaveOpen = false) : this(stream, Encoding.UTF8, bufferSize, leaveOpen) { }
 
 
 
@@ -49,48 +64,53 @@ namespace Ntsh.Serialization.ValveDataFormat {
 
 
 		protected virtual async Task<char?> PollNextCharAsync(CancellationToken token) {
-			if (this.offset >= this.buflen) {
-				// XXX: assumes encoding taking 1+ bytes per char
-				byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
+			if (this.bufferOffset >= this.bufferLength) {
+				int maxByteCount = this.encoding.GetMaxByteCount(buffer.Length);
+				byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(maxByteCount);
 				try {
-					int read = await this.underlyingStream.ReadAsync(rentedBuffer, 0, rentedBuffer.Length, token).Configure();
+					int read = await this.stream.ReadAsync(rentedBuffer, 0, maxByteCount, token).Configure();
 
-					this.buflen = this.decoder.GetChars(rentedBuffer, 0, read, this.buffer, 0, flush: false);
-					if (this.buflen <= 0) {
+					this.bufferLength = this.decoder.GetChars(rentedBuffer, 0, read, this.buffer, 0, flush: false);
+					if (this.bufferLength <= 0) {
 						return null;
 					}
 				} finally {
 					ArrayPool<byte>.Shared.Return(rentedBuffer);
 				}
 
-				this.offset = 0;
+				this.bufferOffset = 0;
 			}
 
-			return this.buffer[this.offset];
+			return this.buffer[this.bufferOffset];
 		}
 
 
-		protected virtual void AdvanceOffsets() {
-			++this.offset;
-			++this.offsetInState;
+		protected virtual void AdvanceOffsets(char responsibleCharacter) {
+			++this.bufferOffset;
+
+			if (responsibleCharacter == '\n') {
+				++this.CurrentLine;
+				this.CharacterInLine = 0;
+			} else {
+				++this.CharacterInLine;
+			}
 		}
 
 
 		protected virtual async Task<char?> NextCharAsync(CancellationToken token) {
-			char? c = await this.PollNextCharAsync(token).Configure();
+			char? maybeNextChar = await this.PollNextCharAsync(token).Configure();
 
-			if (c != null) {
-				this.AdvanceOffsets();
+			if (maybeNextChar is char nextChar) {
+				this.AdvanceOffsets(nextChar);
 			}
 
-			return c;
+			return maybeNextChar;
 		}
 
 
 
 
 		protected virtual void ChangeState(DecState state) {
-			this.offsetInState = 0;
 			this.state = state;
 		}
 
@@ -250,24 +270,24 @@ namespace Ntsh.Serialization.ValveDataFormat {
 			bool foundNewLine = false;
 			VdfAstNode child;
 			for ( ;;) {
-				if (await this.PollNextCharAsync(token).Configure() is not char c) {
+				if (await this.PollNextCharAsync(token).Configure() is not char nextChar) {
 					throw this.GetUnexpectedEndOfStreamException();
 				}
 
-				if (c == '{' || char.IsWhiteSpace(c)) {
-					if (c == '\n') {
+				if (nextChar == '{' || char.IsWhiteSpace(nextChar)) {
+					if (nextChar == '\n') {
 						foundNewLine = true;
 					}
-					this.AdvanceOffsets();
+					this.AdvanceOffsets(nextChar);
 					continue;
 				}
 
-				if (c == '}') {
-					this.AdvanceOffsets();
+				if (nextChar == '}') {
+					this.AdvanceOffsets(nextChar);
 					return node;
 				}
 
-				if (c == '/') {
+				if (nextChar == '/') {
 					child = await this.ReadCommentNodeAsync(foundNewLine, token).Configure();
 				} else {
 					child = await this.ReadPropertyNodeAsync(token).Configure();
@@ -284,23 +304,23 @@ namespace Ntsh.Serialization.ValveDataFormat {
 			VdfAstKeyNode? key = null;
 			VdfAstNode? value = null;
 			do {
-				if (await this.PollNextCharAsync(token).Configure() is not char c) {
+				if (await this.PollNextCharAsync(token).Configure() is not char nextChar) {
 					throw this.GetUnexpectedEndOfStreamException();
 				}
 
 				/* Skip any whitespace we find between the key and the value */
-				if (char.IsWhiteSpace(c)) {
-					this.AdvanceOffsets();
+				if (char.IsWhiteSpace(nextChar)) {
+					this.AdvanceOffsets(nextChar);
 					continue;
 				}
 
-				switch (c) {
+				switch (nextChar) {
 					case '{' when (key != null):
 						value = await this.ReadObjectNodeAsync(token).Configure();
 						break;
 
 					case '"':
-					case char when (char.IsLetter(c)):
+					case char when (char.IsLetter(nextChar)):
 						if (key == null) {
 							key = await this.ReadKeyNodeAsync(token).Configure();
 						} else {
@@ -323,24 +343,24 @@ namespace Ntsh.Serialization.ValveDataFormat {
 					throw new InvalidOperationException("Reader is in an unexpected state.");
 				}
 
-				if (await this.PollNextCharAsync(token).Configure() is not char c) {
+				if (await this.PollNextCharAsync(token).Configure() is not char nextChar) {
 					return null;
 				}
 
-				if (char.IsWhiteSpace(c)) {
-					if (c == '\n') {
+				if (char.IsWhiteSpace(nextChar)) {
+					if (nextChar == '\n') {
 						foundNewLine = true;
 					}
-					this.AdvanceOffsets();
+					this.AdvanceOffsets(nextChar);
 					continue;
 				}
 
-				switch (c) {
+				switch (nextChar) {
 					case '/':
 						return await this.ReadCommentNodeAsync(foundNewLine, token).Configure();
 
 					case '"':
-					case char when (char.IsLetter(c)):
+					case char when (char.IsLetter(nextChar)):
 						return await this.ReadPropertyNodeAsync(token).Configure();
 				}
 

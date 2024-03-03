@@ -61,19 +61,21 @@ namespace Ntsh.Serialization.ValveDataFormat {
 
 
 
-		public VdfAstNodeWriter(Stream underlyingStream, bool ownsUnderlyingStream) : base(underlyingStream, ownsUnderlyingStream) { }
+		public VdfAstNodeWriter(Stream stream, Encoding encoding, bool leaveOpen = false) : base(stream, encoding, leaveOpen) { }
+
+		public VdfAstNodeWriter(Stream stream, bool leaveOpen = false) : this(stream, Encoding.UTF8, leaveOpen) { }
 
 
 
 
 		// TODO: optimize
 		protected virtual async Task<int> WriteStringLiteralAsync(string value, bool countTowardsLineCharacterCount, CancellationToken token) {
-			int byteCount = Encoding.UTF8.GetByteCount(value);
+			int byteCount = this.encoding.GetByteCount(value);
 			byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(byteCount);
 			try {
 				int charCount = value.Length;
-				int written = Encoding.UTF8.GetBytes(value, 0, charCount, rentedBuffer, 0);
-				await this.underlyingStream.WriteAsync(rentedBuffer, 0, written, token).Configure();
+				int written = this.encoding.GetBytes(value, 0, charCount, rentedBuffer, 0);
+				await this.stream.WriteAsync(rentedBuffer, 0, written, token).Configure();
 
 				if (countTowardsLineCharacterCount) {
 					this.ColumnNumber += charCount;

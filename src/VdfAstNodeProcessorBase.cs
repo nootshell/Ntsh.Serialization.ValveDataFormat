@@ -13,15 +13,20 @@ namespace Ntsh.Serialization.ValveDataFormat {
 
 	public abstract class VdfAstNodeProcessorBase : IDisposable {
 
-		protected readonly Stream underlyingStream;
-		protected readonly bool ownsUnderlyingStream;
+		protected readonly Encoding encoding;
+		protected readonly Stream stream;
+		protected readonly bool leaveOpen;
 
 
 
 
-		protected VdfAstNodeProcessorBase(Stream underlyingStream, bool ownsUnderlyingStream) : base() {
-			this.underlyingStream = underlyingStream;
-			this.ownsUnderlyingStream = ownsUnderlyingStream;
+		protected VdfAstNodeProcessorBase(Stream stream, Encoding encoding, bool leaveOpen) : base() {
+			ArgumentNullException.ThrowIfNull(stream);
+			ArgumentNullException.ThrowIfNull(encoding);
+
+			this.encoding = encoding;
+			this.stream = stream;
+			this.leaveOpen = leaveOpen;
 		}
 
 		~VdfAstNodeProcessorBase() {
@@ -32,8 +37,8 @@ namespace Ntsh.Serialization.ValveDataFormat {
 
 
 		protected virtual void DisposeCore(bool disposing) {
-			if (disposing && this.ownsUnderlyingStream) {
-				this.underlyingStream.Dispose();
+			if (disposing && !this.leaveOpen) {
+				this.stream.Dispose();
 			}
 		}
 
